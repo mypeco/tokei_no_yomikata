@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="ja" translate="no" class="notranslate">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="google" content="notranslate">
+    <title>とけいをよもう</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body {
+            touch-action: manipulation;
+            font-family: "Hiragino Maru Gothic ProN", "Rounded Mplus 1c", sans-serif;
+            overscroll-behavior: none;
+            transition: background-color 1s ease;
+        }
+
+        /* アニメーション定義 */
+        @keyframes pop-in {
+            0% { transform: scale(0.9); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-pop-in {
+            animation: pop-in 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
+        }
+
+        @keyframes bounce-in {
+            0% { transform: scale(0.3); opacity: 0; }
+            50% { transform: scale(1.05); opacity: 1; }
+            70% { transform: scale(0.9); }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-bounce-in {
+            animation: bounce-in 0.5s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+        .animate-shake {
+            animation: shake 0.4s ease-in-out;
+        }
+        
+        .select-none {
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        
+        /* SVG要素のトランジション用 */
+        .clock-element {
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // --- アイコン ---
+        const IconBase = ({ children, className = "", ...props }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{children}</svg>
+        );
+        const Star = (props) => (<IconBase {...props}><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" /></IconBase>);
+        const Home = (props) => (<IconBase {...props}><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></IconBase>);
+        const ArrowRight = (props) => (<IconBase {...props}><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></IconBase>);
+        const Check = (props) => (<IconBase {...props}><polyline points="20 6 9 17 4 12" /></IconBase>);
+        const Eye = (props) => (<IconBase {...props}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></IconBase>);
+        const EyeOff = (props) => (<IconBase {...props}><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></IconBase>);
+        const Volume2 = (props) => (<IconBase {...props}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" /></IconBase>);
+        const VolumeX = (props) => (<IconBase {...props}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><line x1="23" y1="9" x2="17" y2="15" /><line x1="17" y1="9" x2="23" y2="15" /></IconBase>);
+
+        // --- 共通ロジック: ふん・ぷん判定 ---
+        const getSuffix = (m) => {
+            const lastDigit = m % 10;
+            // 2, 5, 7, 9 は "ふん"
+            if ([2, 5, 7, 9].includes(lastDigit)) return 'ふん';
+            // 1, 3, 4, 6, 8, 0 (10, 20...含む) は "ぷん"
+            return 'ぷん';
+        };
+
+        // --- 効果音フック (Web Audio API) ---
+        const useSound = () => {
+            const [isMuted, setIsMuted] = useState(false);
+            const audioCtxRef = useRef(null);
+
+            const initAudio = () => {
+                if (!audioCtxRef.current) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (AudioContext) {
+                        audioCtxRef.current = new AudioContext();
+                    }
+                }
+                if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+                    audioCtxRef.current.resume();
+                }
+            };
+
+            const playTone = (freq, type, duration, startTime = 0, vol = 0.1) => {
+                if (isMuted || !audioCtxRef.current) return;
+                try {
+                    const osc = audioCtxRef.current.createOscillator();
+                    const gain = audioCtxRef.current.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, audioCtxRef.current.currentTime + startTime);
+                    gain.gain.setValueAtTime(vol, audioCtxRef.current.currentTime + startTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, audioCtxRef.current.currentTime + startTime + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtxRef.current.destination);
+                    osc.start(audioCtxRef.current.currentTime + startTime);
+                    osc.stop(audioCtxRef.current.currentTime + startTime + duration);
+                } catch (e) {
+                    console.error("Audio play failed", e);
+                }
+            };
+
+            const playCorrect = () => {
+                initAudio();
+                // ピロリン♪ (C6 -> E6)
+                playTone(1046.50, 'sine', 0.2, 0, 0.1); 
+                playTone(1318.51, 'sine', 0.4, 0.15, 0.1); 
+            };
+
+            const playIncorrect = () => {
+                initAudio();
+                // ブブー (Low saw)
+                playTone(150, 'sawtooth', 0.15, 0, 0.1);
+                playTone(150, 'sawtooth', 0.3, 0.2, 0.1);
+            };
+            
+            const playClick = () => {
+                initAudio();
+                // カッ (Short sine)
+                playTone(800, 'sine', 0.05, 0, 0.05);
+            };
+
+            const toggleMute = () => {
+                initAudio(); // ミュート解除時にもコンテキストを開始
+                setIsMuted(!isMuted);
+            };
+
+            return { isMuted, toggleMute, playCorrect, playIncorrect, playClick };
+        };
+
+        // --- 花吹雪 ---
+        const Confetti = () => {
+            const colors = ['#f472b6', '#fbbf24', '#60a5fa', '#a78bfa', '#34d399'];
+            const pieces = [...Array(30)].map((_, i) => ({
+                id: i, left: Math.random() * 100 + '%', animationDelay: Math.random() * 0.5 + 's', backgroundColor: colors[Math.floor(Math.random() * colors.length)], rotation: Math.random() * 360 + 'deg',
+            }));
+            return (
+                <div className="absolute inset-0 pointer-events-none overflow-hidden z-50">
+                    {pieces.map((p) => (
+                        <div key={p.id} className="absolute w-3 h-3 rounded-sm" style={{ left: p.left, top: '-20px', backgroundColor: p.backgroundColor, transform: `rotate(${p.rotation})`, animation: `fall 2.5s linear infinite ${p.animationDelay}` }} />
+                    ))}
+                    <style>{`@keyframes fall { 0% { top: -20px; opacity: 1; } 100% { top: 100%; opacity: 0; } }`}</style>
+                </div>
+            );
+        };
+
+        // --- アナログ時計コンポーネント ---
+        const AnalogClock = ({ h, m, size = "large", showMinutes = false, onToggleMinutes, playClick }) => {
+            const [angles, setAngles] = useState({ h: 0, m: 0 });
+            const isFirst = useRef(true);
+
+            useEffect(() => {
+                const targetM = m * 6;
+                const targetH = (h % 12) * 30 + (m / 60) * 30;
+                if (isFirst.current) {
+                    setAngles({ h: targetH, m: targetM });
+                    isFirst.current = false;
+                } else {
+                    setAngles(prev => {
+                        const adjustAngle = (current, target) => {
+                            let diff = target - (current % 360);
+                            diff = ((diff + 540) % 360) - 180;
+                            return current + diff;
+                        };
+                        return { h: adjustAngle(prev.h, targetH), m: adjustAngle(prev.m, targetM) };
+                    });
+                }
+            }, [h, m]);
+            
+            const containerClass = size === "small" ? "w-40 h-40" : "w-64 h-64 sm:w-80 sm:h-80";
+            
+            // サイズ定数
+            const faceRadius = showMinutes ? 32 : 48; 
+            const numberRadius = showMinutes ? 23 : 34;
+            const minuteNumberRadius = 43;
+            const scaleFactor = showMinutes ? 0.75 : 1.0; 
+            const strokeWidthBase = (size === "small" ? 0.6 : 1) * scaleFactor;
+            const minuteHandLen = showMinutes ? 28 : 38;
+            const hourHandLen = showMinutes ? 18 : 24;
+            const COLOR_FRAME = "#3b82f6";
+            const COLOR_HOUR = "#000000";
+            const COLOR_MINUTE = "#ef4444";
+            const COLOR_TEXT = "#000000";
+
+            return (
+                <div className={`relative ${containerClass} mx-auto transition-all duration-500`}>
+                    <svg viewBox="0 0 100 100" className="w-full h-full drop-shadow-xl overflow-visible">
+                        {showMinutes && [...Array(12)].map((_, i) => {
+                            const num = i * 5; 
+                            const angle = (i * 30) * (Math.PI / 180);
+                            const x = 50 + minuteNumberRadius * Math.sin(angle);
+                            const y = 50 - minuteNumberRadius * Math.cos(angle);
+                            return <text key={`min-${num}`} x={x} y={y} textAnchor="middle" dominantBaseline="middle" className="text-[5px] font-bold fill-slate-400 animate-pop-in" style={{ fontFamily: 'sans-serif' }}>{num}</text>;
+                        })}
+                        <circle cx="50" cy="50" r={faceRadius} fill="white" stroke={COLOR_FRAME} strokeWidth={3 * strokeWidthBase} className="clock-element" />
+                        <circle cx="50" cy="50" r={Math.max(0, faceRadius - 3)} fill="none" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="2 2" className="clock-element" />
+                        {[...Array(60)].map((_, i) => {
+                            const isMajor = i % 5 === 0;
+                            const tickLen = (isMajor ? 4 : 2) * (showMinutes ? 0.8 : 1);
+                            const yOuter = 50 - faceRadius;
+                            const yInner = 50 - faceRadius + tickLen;
+                            return <line key={`tick-${i}`} x1="50" y1={yOuter} x2="50" y2={yInner} stroke={isMajor ? COLOR_FRAME : "#cbd5e1"} strokeWidth={(isMajor ? 1.5 : 0.5) * strokeWidthBase} transform={`rotate(${i * 6} 50 50)`} className="clock-element" />;
+                        })}
+                        {[...Array(12)].map((_, i) => {
+                            const num = i + 1;
+                            const angle = (num * 30) * (Math.PI / 180);
+                            const x = 50 + numberRadius * Math.sin(angle);
+                            const y = 50 - numberRadius * Math.cos(angle);
+                            return <text key={`num-${num}`} x={x} y={y} textAnchor="middle" dominantBaseline="middle" className={`font-bold ${showMinutes ? 'text-[6px]' : 'text-[8px]'} clock-element`} fill={COLOR_TEXT} style={{ fontFamily: 'sans-serif' }}>{num}</text>;
+                        })}
+                        <line x1="50" y1="50" x2="50" y2={50 - minuteHandLen} stroke={COLOR_MINUTE} strokeWidth={2.5 * strokeWidthBase} strokeLinecap="round" transform={`rotate(${angles.m} 50 50)`} className="clock-element" />
+                        <circle cx="50" cy={50 - minuteHandLen} r={1.5 * strokeWidthBase} fill={COLOR_MINUTE} transform={`rotate(${angles.m} 50 50)`} className="clock-element" />
+                        <line x1="50" y1="50" x2="50" y2={50 - hourHandLen} stroke={COLOR_HOUR} strokeWidth={4 * strokeWidthBase} strokeLinecap="round" transform={`rotate(${angles.h} 50 50)`} className="clock-element" />
+                        <circle cx="50" cy="50" r={2.5 * strokeWidthBase} fill={COLOR_HOUR} stroke="white" strokeWidth="1" className="clock-element" />
+                    </svg>
+                    {onToggleMinutes && (
+                        <button onClick={() => { playClick(); onToggleMinutes(); }} className="absolute -bottom-2 -right-2 bg-white border-2 border-slate-200 rounded-full p-2 shadow-md text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-all active:scale-95 z-20" title="切り替え">
+                            <div className="flex flex-col items-center leading-none">
+                                <span className="text-[10px] font-bold mb-0.5">ふん</span>
+                                {showMinutes ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4 text-slate-300" />}
+                            </div>
+                        </button>
+                    )}
+                </div>
+            );
+        };
+
+        // --- 時間操作パネル ---
+        const TimeControl = ({ h, m, setTime, playClick, label = "とけいを うごかそう", themeColor = "text-slate-500" }) => {
+            const updateTime = (type, val) => {
+                playClick();
+                let newH = h, newM = m;
+                if (type === 'h') { newH = ((h + val - 1 + 12) % 12) + 1; }
+                else { newM = m + val; if (newM >= 60) { newM -= 60; newH = (h % 12) + 1; } else if (newM < 0) { newM += 60; newH = ((h - 2 + 12) % 12) + 1; } }
+                setTime({ h: newH, m: newM });
+            };
+
+            return (
+                <div className="bg-white/50 backdrop-blur-sm rounded-2xl p-4 w-full border-2 border-slate-100">
+                    <div className={`text-center font-bold mb-2 text-sm ${themeColor}`}>{label}</div>
+                    <div className="flex items-center justify-center gap-4">
+                        <div className="flex flex-col items-center gap-1">
+                            <button onClick={() => updateTime('h', 1)} className="w-10 h-8 bg-white rounded-lg border-2 border-slate-200 text-slate-500 font-bold hover:bg-slate-50 active:scale-95 touch-manipulation">▲</button>
+                            <div className="bg-white px-4 py-2 rounded-xl border-2 border-slate-200 w-20 text-center"><span className="text-2xl font-bold text-slate-900">{h}</span><span className="text-xs font-bold text-slate-400 ml-1">じ</span></div>
+                            <button onClick={() => updateTime('h', -1)} className="w-10 h-8 bg-white rounded-lg border-2 border-slate-200 text-slate-500 font-bold hover:bg-slate-50 active:scale-95 touch-manipulation">▼</button>
+                        </div>
+                        <div className="text-slate-300 font-bold">:</div>
+                        <div className="flex flex-col items-center gap-1">
+                            <div className="flex gap-1">
+                                <button onClick={() => updateTime('m', 5)} className="w-8 h-8 bg-white rounded-lg border-2 border-slate-200 text-slate-400 font-bold text-xs hover:bg-slate-50 active:scale-95 touch-manipulation">+5</button>
+                                <button onClick={() => updateTime('m', 1)} className="w-8 h-8 bg-white rounded-lg border-2 border-slate-200 text-slate-500 font-bold hover:bg-slate-50 active:scale-95 touch-manipulation">▲</button>
+                            </div>
+                            <div className={`bg-white px-4 py-2 rounded-xl border-2 border-slate-200 w-24 text-center transition-opacity duration-300 ${m === 0 ? 'opacity-30' : 'opacity-100'}`}>
+                                <span className="text-2xl font-bold text-slate-900">{m < 10 ? `0${m}` : m}</span>
+                                <span className="text-xs font-bold text-slate-400 ml-1">{getSuffix(m)}</span>
+                            </div>
+                            <div className="flex gap-1">
+                                <button onClick={() => updateTime('m', -5)} className="w-8 h-8 bg-white rounded-lg border-2 border-slate-200 text-slate-400 font-bold text-xs hover:bg-slate-50 active:scale-95 touch-manipulation">-5</button>
+                                <button onClick={() => updateTime('m', -1)} className="w-8 h-8 bg-white rounded-lg border-2 border-slate-200 text-slate-500 font-bold hover:bg-slate-50 active:scale-95 touch-manipulation">▼</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- メインアプリ ---
+        const ClockApp = () => {
+            const [mode, setMode] = useState('menu');
+            const [quizLevel, setQuizLevel] = useState(1);
+            const [showMinutes, setShowMinutes] = useState(false);
+            const [stars, setStars] = useState({ match: 0, quiz1: 0, quiz2: 0, quiz3: 0, quiz4: 0 });
+            const FADE_LIMIT_COUNT = 10;
+            const [quizKey, setQuizKey] = useState(0);
+
+            // サウンドフック
+            const { isMuted, toggleMute, playCorrect, playIncorrect, playClick } = useSound();
+
+            const [exploreTime, setExploreTime] = useState({ h: 3, m: 0 });
+            const [matchTarget, setMatchTarget] = useState({ h: 3, m: 0 });
+            const [matchUser, setMatchUser] = useState({ h: 12, m: 0 });
+            const [matchFeedback, setMatchFeedback] = useState(null);
+            const [targetTime, setTargetTime] = useState({ h: 3, m: 0 });
+            const [choices, setChoices] = useState([]);
+            const [feedback, setFeedback] = useState(null);
+            const [hintMessage, setHintMessage] = useState(null);
+
+            const BG_RGB = {
+                default: [255, 255, 255], 
+                match:   [209, 250, 229], 
+                quiz1:   [255, 228, 230], 
+                quiz2:   [255, 237, 213], 
+                quiz3:   [254, 243, 199], 
+                quiz4:   [224, 242, 254]
+            };
+
+            const currentTheme = useMemo(() => {
+                if (mode === 'menu' || mode === 'explore') return { rgb: 'rgb(255, 255, 255)', count: 0, base: BG_RGB.default };
+                let count = 0, baseColor = BG_RGB.default;
+                if (mode === 'match') { count = stars.match; baseColor = BG_RGB.match; }
+                else if (mode === 'quiz') {
+                    if (quizLevel === 1) { count = stars.quiz1; baseColor = BG_RGB.quiz1; }
+                    else if (quizLevel === 2) { count = stars.quiz2; baseColor = BG_RGB.quiz2; }
+                    else if (quizLevel === 3) { count = stars.quiz3; baseColor = BG_RGB.quiz3; }
+                    else if (quizLevel === 4) { count = stars.quiz4; baseColor = BG_RGB.quiz4; }
+                }
+                const progress = (Math.min(count, FADE_LIMIT_COUNT) / FADE_LIMIT_COUNT) * 0.5;
+                const r = Math.round(baseColor[0] + (255 - baseColor[0]) * progress);
+                const g = Math.round(baseColor[1] + (255 - baseColor[1]) * progress);
+                const b = Math.round(baseColor[2] + (255 - baseColor[2]) * progress);
+                return { rgb: `rgb(${r}, ${g}, ${b})`, count, base: baseColor };
+            }, [mode, quizLevel, stars]);
+
+            const initMatchMode = () => { setMatchTarget({ h: Math.floor(Math.random()*12)+1, m: Math.floor(Math.random()*6)*10 }); setMatchUser({ h: 12, m: 0 }); setMatchFeedback(null); };
+            const checkMatch = () => {
+                if (matchFeedback === 'correct') return;
+                if (matchUser.h === matchTarget.h && matchUser.m === matchTarget.m) { 
+                    playCorrect();
+                    setMatchFeedback('correct'); 
+                    setStars(p => ({ ...p, match: p.match + 1 })); 
+                    setTimeout(initMatchMode, 3000); 
+                } else { 
+                    playIncorrect();
+                    setMatchFeedback('try_again'); 
+                    setTimeout(() => setMatchFeedback(null), 1500); 
+                }
+            };
+            const initQuizMode = (lvl) => { generateProblem(lvl); };
+            const getHint = (ch, cm, th, tm) => {
+                if (ch !== th) return tm === 0 ? { icon: '🐢', text: `みじかい はりは ${th} を さしているよ！` } : { icon: '🐢', text: `みじかい はりは ${th} と ${th===12?1:th+1} の あいだに あるよ！` };
+                if (cm !== tm) return { icon: '🐰', text: `ながい はりを よくみてみよう！` };
+                return null;
+            };
+            const generateProblem = (lvl) => {
+                let h, m;
+                switch (lvl) {
+                    case 1: h = Math.floor(Math.random()*12)+1; m = 0; break;
+                    case 2: h = Math.floor(Math.random()*12)+1; m = 30; break;
+                    case 3: h = Math.floor(Math.random()*12)+1; m = Math.floor(Math.random()*12)*5; break;
+                    case 4: default: h = Math.floor(Math.random()*12)+1; m = Math.floor(Math.random()*60); break;
+                }
+                setTargetTime({ h, m }); setFeedback(null); setHintMessage(null);
+                const correct = { h, m };
+                let dist = [], attempts = 0;
+                while (dist.length < 2 && attempts < 50) {
+                    attempts++;
+                    let dh = h, dm = m;
+                    if (lvl === 1) { dh = (h + Math.floor(Math.random()*4)-2+12)%12 || 12; if(dh===h) dh=(h%12)+1; }
+                    else { if (Math.random()<0.5) { dh=(h+Math.floor(Math.random()*4)-2+12)%12||12; if(dh===h)dh=(h%12)+1; } else { dm = lvl===2 ? (m===30?0:30) : (m+15)%60; } }
+                    if (!dist.some(d=>d.h===dh && d.m===dm) && (dh!==h || dm!==m)) dist.push({ h: dh, m: dm });
+                }
+                while(dist.length<2) { let sh=(h%12)+1; if(dist.some(d=>d.h===sh)) sh=(sh%12)+1; dist.push({ h: sh, m }); }
+                setChoices([correct, ...dist].sort(() => Math.random() - 0.5));
+            };
+            const handleQuizAnswer = (c) => {
+                if (feedback === 'correct') return; 
+                if (c.h === targetTime.h && c.m === targetTime.m) { 
+                    playCorrect();
+                    setFeedback('correct'); 
+                    setStars(p => ({ ...p, [`quiz${quizLevel}`]: p[`quiz${quizLevel}`] + 1 })); 
+                } else { 
+                    playIncorrect();
+                    setFeedback('incorrect'); 
+                    setHintMessage(getHint(c.h, c.m, targetTime.h, targetTime.m)); 
+                }
+            };
+            const changeQuizLevel = (l) => { playClick(); setQuizLevel(l); setFeedback(null); setHintMessage(null); setQuizKey(k => k+1); generateProblem(l); };
+
+            const levelColors = { 1: {bg:'bg-rose-200', border:'border-rose-200'}, 2: {bg:'bg-orange-200', border:'border-orange-200'}, 3: {bg:'bg-amber-200', border:'border-amber-200'}, 4: {bg:'bg-sky-200', border:'border-sky-200'} };
+            const currentUI = mode === 'match' ? { border: 'border-emerald-200', bg: 'bg-emerald-200' } : (levelColors[quizLevel] || { border: 'border-slate-200', bg: 'bg-slate-200' });
+            
+            const renderStars = (count) => (
+                <div className="flex gap-1">
+                    {[5, 10, 15].map(limit => <Star key={limit} className={`w-5 h-5 ${count >= limit ? 'text-yellow-400 fill-yellow-400' : 'text-slate-300'}`} />)}
+                </div>
+            );
+
+            return (
+                <div className="min-h-screen p-4 flex flex-col items-center select-none overflow-hidden pb-20 transition-colors duration-1000" style={{ backgroundColor: currentTheme.rgb }}>
+                    <div className="w-full max-w-md flex justify-between items-center mb-4 bg-white/80 backdrop-blur-sm p-3 rounded-full shadow-sm border border-slate-100 z-50">
+                        <button onClick={() => { playClick(); setMode('menu'); }} className="flex items-center gap-2 text-slate-500 hover:text-slate-700 font-bold transition-colors"><Home className="w-5 h-5" /><span className="text-sm">メニュー</span></button>
+                        <div className="flex items-center gap-4">
+                            {mode !== 'menu' && mode !== 'explore' && <div className="flex items-center gap-2 pl-2">{renderStars(currentTheme.count)}<span className="text-lg font-bold text-slate-600 ml-1">{currentTheme.count}</span></div>}
+                            <button onClick={toggleMute} className={`p-2 rounded-full transition-colors ${isMuted ? 'text-slate-400 bg-slate-100' : 'text-slate-600 bg-white shadow-sm'}`}>
+                                {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+                            </button>
+                        </div>
+                    </div>
+
+                    {mode === 'menu' && (
+                        <div className="w-full max-w-md flex flex-col gap-6 animate-pop-in">
+                            <div className="text-center py-8"><h1 className="text-3xl font-bold text-slate-900 mb-2">とけいであそぼ</h1><p className="text-slate-500 font-bold">すきな あそびを えらんでね</p></div>
+                            <button onClick={() => { playClick(); setMode('explore'); }} className="bg-white p-6 rounded-3xl border-4 border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-all shadow-sm flex items-center gap-4 group"><div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center text-4xl transform transition group-hover:scale-110">👆</div><div className="text-left"><div className="text-xs font-bold text-slate-400 mb-1">ステージ１</div><div className="text-xl font-bold text-slate-700">さわってみる</div><div className="text-xs text-slate-400">じゆうに うごかして はっけん！</div></div></button>
+                            <button onClick={() => { playClick(); initMatchMode(); setMode('match'); }} className="bg-white p-6 rounded-3xl border-4 border-emerald-200 hover:border-emerald-300 hover:bg-emerald-50 transition-all shadow-sm flex items-center gap-4 group relative overflow-hidden">{stars.match >= 5 && <div className="absolute top-0 right-0 bg-emerald-400 text-white text-xs font-bold px-3 py-1 rounded-bl-xl">★ {Math.floor(stars.match/5)}</div>}<div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center text-4xl transform transition group-hover:scale-110">🥬</div><div className="text-left"><div className="text-xs font-bold text-emerald-600 mb-1">ステージ２</div><div className="text-xl font-bold text-slate-700">まねっこする</div><div className="text-xs text-slate-400">おてほんと おなじに できるかな？</div></div></button>
+                            <button onClick={() => { playClick(); initQuizMode(quizLevel); setMode('quiz'); }} className="bg-white p-6 rounded-3xl border-4 border-rose-200 hover:border-rose-300 hover:bg-rose-50 transition-all shadow-sm flex items-center gap-4 group relative overflow-hidden">{(stars.quiz1 + stars.quiz2 + stars.quiz3 + stars.quiz4) >= 5 && <div className="absolute top-0 right-0 bg-rose-400 text-white text-xs font-bold px-3 py-1 rounded-bl-xl">★</div>}<div className="w-16 h-16 bg-rose-100 rounded-full flex items-center justify-center text-4xl transform transition group-hover:scale-110">🎁</div><div className="text-left"><div className="text-xs font-bold text-rose-500 mb-1">ステージ３</div><div className="text-xl font-bold text-slate-700">クイズ</div><div className="text-xs text-slate-400">とけいを よんでみよう！</div></div></button>
+                        </div>
+                    )}
+
+                    {mode === 'explore' && (
+                        <div className="w-full max-w-md bg-white rounded-[2.5rem] shadow-lg border-4 border-slate-200 p-6 flex flex-col items-center animate-pop-in">
+                            <h2 className="text-xl font-bold text-slate-700 mb-6">じゆうに さわろう</h2>
+                            <AnalogClock h={exploreTime.h} m={exploreTime.m} showMinutes={showMinutes} onToggleMinutes={() => setShowMinutes(!showMinutes)} playClick={playClick} />
+                            <div className="mt-8 w-full"><TimeControl h={exploreTime.h} m={exploreTime.m} setTime={setExploreTime} playClick={playClick} themeColor="text-slate-400" /></div>
+                        </div>
+                    )}
+
+                    {mode === 'match' && (
+                        <div className="w-full max-w-md flex flex-col items-center animate-pop-in">
+                            {matchFeedback === 'correct' && <Confetti />}
+                            <div className="flex gap-2 mb-4 w-full justify-center">
+                                <div className="bg-white rounded-3xl p-3 shadow-md border-4 border-emerald-200 flex flex-col items-center"><div className="text-xs font-bold text-emerald-600 mb-2 bg-emerald-50 px-2 py-1 rounded-full">おてほん</div><AnalogClock h={matchTarget.h} m={matchTarget.m} size="small" showMinutes={showMinutes} playClick={playClick} /></div>
+                                <div className="flex items-center text-emerald-200"><ArrowRight className="w-6 h-6" /></div>
+                                <div className="bg-white rounded-3xl p-3 shadow-md border-4 border-slate-200 flex flex-col items-center relative"><div className="text-xs font-bold text-slate-500 mb-2 bg-slate-100 px-2 py-1 rounded-full">あわせよう</div><AnalogClock h={matchUser.h} m={matchUser.m} size="small" showMinutes={showMinutes} onToggleMinutes={() => setShowMinutes(!showMinutes)} playClick={playClick} />{matchFeedback === 'correct' && <div className="absolute inset-0 flex items-center justify-center bg-white/80 rounded-3xl z-10"><Check className="w-16 h-16 text-emerald-500 drop-shadow-lg animate-bounce-in" strokeWidth={4} /></div>}</div>
+                            </div>
+                            <div className="w-full bg-white rounded-[2rem] shadow-lg p-4 border-2 border-emerald-100"><TimeControl h={matchUser.h} m={matchUser.m} setTime={setMatchUser} playClick={playClick} label="みぎの とけいを うごかしてね" themeColor="text-emerald-600" /><button onClick={checkMatch} className={`w-full mt-4 py-4 rounded-xl font-bold text-white text-lg shadow-md transition-all active:scale-95 ${matchFeedback === 'correct' ? 'bg-emerald-400' : 'bg-slate-400 hover:bg-slate-500'}`}>{matchFeedback === 'correct' ? 'せいかい！つぎへ' : 'できた！'}</button>{matchFeedback === 'try_again' && <div className="text-center text-orange-400 font-bold mt-2 animate-shake">おしい！ もうすこしだよ</div>}</div>
+                        </div>
+                    )}
+
+                    {mode === 'quiz' && (
+                        <div key={quizKey} className="w-full max-w-md flex flex-col items-center animate-pop-in relative">
+                            {feedback === 'correct' && <Confetti />}
+                            <div className="w-full mb-4 z-50 relative">
+                                <div className="flex justify-center gap-2 bg-white/60 p-2 rounded-2xl border border-slate-200 backdrop-blur-sm shadow-sm">
+                                    {[1, 2, 3, 4].map((l) => {
+                                        const isActive = quizLevel === l; const c = levelColors[l];
+                                        return <button key={l} onClick={() => changeQuizLevel(l)} className={`flex-1 py-2 rounded-xl font-bold text-xs transition-all active:scale-95 touch-manipulation shadow-sm flex flex-col items-center justify-center gap-1 ${isActive ? `${c.bg} text-white shadow-sm` : 'bg-white text-slate-400 hover:bg-slate-50'}`}><span>{l===1&&'ちょうど'}{l===2&&'はん'}{l===3&&'5ふん'}{l===4&&'1ふん'}</span><div className="flex gap-0.5">{[...Array(3)].map((_, i) => <div key={i} className={`w-1.5 h-1.5 rounded-full ${stars[`quiz${l}`]>=(i+1)*5 ? (isActive?'bg-white':'bg-yellow-400') : (isActive?'bg-white/30':'bg-slate-100')}`} />)}</div></button>;
+                                    })}
+                                </div>
+                            </div>
+                            <div className={`w-full max-w-md bg-white rounded-[2.5rem] shadow-lg border-4 ${currentUI.border} p-6 flex flex-col items-center relative`}>
+                                <h1 className="text-xl font-bold text-slate-700 mb-6 mt-2 relative z-10">いま なんじ？</h1>
+                                <AnalogClock h={targetTime.h} m={targetTime.m} showMinutes={showMinutes} onToggleMinutes={() => setShowMinutes(!showMinutes)} playClick={playClick} />
+                                {feedback === 'correct' && <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/95 z-30 rounded-[2.3rem] animate-bounce-in"><div className="w-24 h-24 bg-green-50 rounded-full flex items-center justify-center mb-4 border-4 border-green-200"><Check className="w-12 h-12 text-green-400" strokeWidth={4} /></div><div className="text-3xl font-bold text-green-500 mb-2">せいかい！</div><div className="text-xl font-bold text-slate-600 mb-6">{targetTime.h}:{targetTime.m < 10 ? `0${targetTime.m}` : targetTime.m}</div><button onClick={() => { playClick(); generateProblem(quizLevel); }} className={`group relative px-8 py-3 rounded-full font-bold text-white shadow-lg transform transition hover:scale-105 active:scale-95 flex items-center gap-2 ${currentUI.bg}`}>つぎの もんだいへ<ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" /></button></div>}
+                                {feedback === 'incorrect' && hintMessage && <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-700/50 z-30 rounded-[2.3rem] p-4"><div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl border-4 border-yellow-200 animate-pop-in"><div className="flex justify-center -mt-12 mb-4"><div className="w-20 h-20 bg-yellow-50 rounded-full flex items-center justify-center border-4 border-white text-4xl shadow-md">{hintMessage.icon}</div></div><div className="text-center"><div className="text-sm font-bold text-yellow-600 mb-2 bg-yellow-50 inline-block px-3 py-1 rounded-full">ヒント</div><div className="text-lg font-bold text-slate-700 mb-4">{hintMessage.text}</div></div><button onClick={() => { playClick(); setFeedback(null); setHintMessage(null); }} className="w-full py-3 bg-slate-100 rounded-xl font-bold text-slate-500 hover:bg-slate-200 border-2 border-slate-200">もういちど</button></div></div>}
+                                <div className="grid grid-cols-1 gap-3 w-full mt-8 relative z-10">
+                                    {choices.map((choice, idx) => (
+                                        <button key={idx} onClick={() => handleQuizAnswer(choice)} className={`group relative bg-white border-2 hover:bg-slate-50 active:scale-95 transition-all rounded-2xl p-4 flex flex-col items-center justify-center shadow-sm ${currentUI.border}`} disabled={feedback === 'correct'}>
+                                            <div className="flex items-baseline gap-1">
+                                                <span className="text-4xl font-bold text-slate-700">{choice.h}</span>
+                                                <span className="text-4xl font-bold text-slate-700">:</span>
+                                                <span className="text-4xl font-bold text-slate-700">{choice.m < 10 ? `0${choice.m}` : choice.m}</span>
+                                            </div>
+                                            <div className={`text-sm font-bold text-slate-500 mt-1`}>{choice.h}じ {choice.m > 0 ? `${choice.m}${getSuffix(choice.m)}` : ''}</div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<ClockApp />);
+    </script>
+</body>
+</html>
